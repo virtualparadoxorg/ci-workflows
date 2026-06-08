@@ -1,0 +1,116 @@
+name: Docker Release
+
+# Reusable, tag-driven Docker image release for deploy-only eu.virtualparadox projects.
+#
+# The GIT TAG is the single source of truth for the version: a tag `vX.Y.Z[-qualifier]`
+# builds and pushes `<registry-namespace>/<module>:vX.Y.Z[-qualifier]` for each named app
+# module. The version is set transiently for the build only (nothing is written back to the
+# source pom, which stays 0-SNAPSHOT). Tests are gated on the PR via the consumer's CI
+# workflow; this release workflow packages the already-verified code into images.
+#
+# Usage from a consumer repo (.github/workflows/release.yml):
+#   name: Release
+#   on: { push: { tags: ['v*'] } }
+#   jobs:
+#     release:
+#       uses: virtualparadoxorg/ci-workflows/.github/workflows/docker-release.yml@v1
+#       with:
+#         modules: "radar-app-ui,radar-app-crawler,radar-app-migrator,radar-app-monolith"
+#         registry-namespace: "ghcr.io/virtualparadoxorg"
+#       secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      modules:
+        description: "Comma-separated app module artifactIds (each lives at radar-apps/<module> with a Dockerfile)."
+        type: string
+        required: true
+      registry-namespace:
+        description: "Image namespace, e.g. ghcr.io/virtualparadoxorg. Image = <namespace>/<module>:<tag>."
+        type: string
+        required: true
+      module-path-prefix:
+        description: "Reactor path prefix where the app modules live."
+        type: string
+        default: "radar-apps"
+      java-version:
+        description: "JDK version to build with."
+        type: string
+        default: "21"
+      node-version:
+        description: "Node version for the Vaadin frontend build."
+        type: string
+        default: "24"
+      platforms:
+        description: "Docker buildx target platforms (e.g. linux/amd64,linux/arm64)."
+        type: string
+        default: "linux/amd64"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.split.outputs.modules }}
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Derive version from tag
+        id: ver
+        run: |
+          ref="${GITHUB_REF_NAME}"
+          case "$ref" in
+            v[0-9]*) ;;
+            *) echo "::error::Tag '$ref' must look like vX.Y.Z[-qualifier]"; exit 1 ;;
+          esac
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+      - name: Split modules CSV into JSON array
+        id: split
+        run: |
+          json=$(echo "${{ inputs.modules }}" | tr ',' '\n' | tr -d ' ' | grep -v '^$' | jq -R . | jq -cs .)
+          echo "modules=$json" >> "$GITHUB_OUTPUT"
+
+  build-push:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.prepare.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Set version from tag (transient — not committed)
+        run: ./mvnw -B -ntp versions:set -DnewVersion="${{ needs.prepare.outputs.version }}" -DgenerateBackupPoms=false -DprocessAllModules=true
+
+      - name: Package the app module (tests gate on the PR/CI; release packages verified code)
+        run: ./mvnw -B -ntp -pl ${{ inputs.module-path-prefix }}/${{ matrix.module }} -am -Pproduction -DskipTests package
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.module-path-prefix }}/${{ matrix.module }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ inputs.registry-namespace }}/${{ matrix.module }}:v${{ needs.prepare.outputs.version }}
