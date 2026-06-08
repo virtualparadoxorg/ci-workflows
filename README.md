@@ -52,7 +52,7 @@ git tag v1.0.1     && git push origin v1.0.1        # -> 1.0.1 on Central
 | `java-version` | `21` | JDK to build/release with. |
 | `maven-args` | `""` | Extra Maven args appended to the deploy (e.g. `-DexcludeArtifacts=...`). |
 | `version-properties` | `""` | Comma-separated pom property names also set to the released version (e.g. a literal build-config version a parent pins), so the source can stay `0-SNAPSHOT` with no manual bumps. |
-| `run-security` | `true` | Run the OWASP dependency-check (`security` profile). |
+| `run-security` | `false` | Run the OWASP dependency-check (`security` profile). |
 | `run-sbom` | `true` | Generate the CycloneDX SBOM (`sbom` profile). |
 
 ### Required secrets (pass with `secrets: inherit`)

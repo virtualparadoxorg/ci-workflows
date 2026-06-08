@@ -35,9 +35,9 @@ on:
         type: string
         default: ""
       run-security:
-        description: "Run the OWASP dependency-check (security profile) as part of the release."
+        description: "Run the OWASP dependency-check (security profile) as part of the release. Off by default: the NVD scan is slow and externally flaky (it can fail on analyzer/NVD issues, not just real CVEs), which would make releases unreliable. Monitor CVEs with a scheduled scan instead."
         type: boolean
-        default: true
+        default: false
       run-sbom:
         description: "Generate the CycloneDX SBOM (sbom profile)."
         type: boolean
