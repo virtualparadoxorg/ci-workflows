@@ -30,6 +30,10 @@ on:
         description: "Extra Maven arguments appended to the deploy (e.g. -DexcludeArtifacts=...)."
         type: string
         default: ""
+      version-properties:
+        description: "Comma-separated pom property names to also set to the released version (e.g. a literal build-config version a parent pins). Lets a project keep 0-SNAPSHOT in source with no manual bumps."
+        type: string
+        default: ""
       run-security:
         description: "Run the OWASP dependency-check (security profile) as part of the release."
         type: boolean
@@ -82,7 +86,19 @@ jobs:
           echo "Releasing version $version (from tag $ref)"
 
       - name: Set version from tag (transient — not committed)
-        run: ./mvnw -B -ntp versions:set -DnewVersion=${{ steps.ver.outputs.version }} -DgenerateBackupPoms=false -DprocessAllModules=true
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION_PROPERTIES: ${{ inputs.version-properties }}
+        run: |
+          ./mvnw -B -ntp versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false -DprocessAllModules=true
+          IFS=',' read -ra props <<< "$VERSION_PROPERTIES"
+          for p in "${props[@]}"; do
+            p="$(echo "$p" | xargs)"
+            if [ -n "$p" ]; then
+              echo "Setting property $p = $VERSION"
+              ./mvnw -B -ntp versions:set-property -Dproperty="$p" -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+            fi
+          done
 
       - name: Build, verify, and publish to Maven Central
         run: ./mvnw -B -ntp -Prelease${{ inputs.run-security && ',security' || '' }}${{ inputs.run-sbom && ',sbom' || '' }} ${{ inputs.maven-args }} deploy
